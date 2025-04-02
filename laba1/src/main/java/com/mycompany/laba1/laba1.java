@@ -10,11 +10,18 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
+import javax.swing.table.DefaultTableModel;
 
 class IntegralTask implements Runnable {
     private double lowBorder;
@@ -24,7 +31,8 @@ class IntegralTask implements Runnable {
     private int totalThreads;
     private double[] results;
 
-    public IntegralTask(double lowBorder, double highBorder, double step, int threadIndex, int totalThreads, double[] results) {
+    public IntegralTask(double lowBorder, double highBorder,
+            double step, int threadIndex, int totalThreads, double[] results) {
         this.lowBorder = lowBorder;
         this.highBorder = highBorder;
         this.step = step;
@@ -108,17 +116,14 @@ class RecIntegral implements Serializable {
 
     // Сеттеры
     public void setLowborder(double lowborder) throws InvalidRecIntegralValueException {
-        validateValue(lowborder);
         this.lowborder = lowborder;
     }
 
     public void setHighborder(double highborder) throws InvalidRecIntegralValueException {
-        validateValue(highborder);
         this.highborder = highborder;
     }
 
     public void setStep(double step) throws InvalidRecIntegralValueException {
-        validateValue(step);
         this.step = step;
     }
 
@@ -129,11 +134,21 @@ class RecIntegral implements Serializable {
 
       
 public class laba1 extends javax.swing.JFrame {
+    private static final int SERVER_PORT = 9876;
+    private static final int BUFFER_SIZE = 1024;
+    private ArrayList<RecIntegral> records;
+    
     int selectedRow = 0;
     LinkedList<RecIntegral> linkedList = new LinkedList<>();
     
     public laba1() {
         initComponents();
+        records = new ArrayList<>();
+    
+    for (int i = 0; i < 13; i++) {
+        new Thread(() -> runClient()).start(); // Каждый клиент запускается в отдельном потоке
+    }
+        new Thread(this::receiveClientRegistrations).start();
     }
     @SuppressWarnings("unchecked")
     // <editor-fold defaultstate="collapsed" desc="Generated Code">//GEN-BEGIN:initComponents
@@ -341,7 +356,94 @@ public class laba1 extends javax.swing.JFrame {
 
         pack();
     }// </editor-fold>//GEN-END:initComponents
+    private Map<Integer, Integer> clientPorts = new HashMap<>(); // Список портов клиентов
+   
+   public static void runClient() {
+    try {
+        ProcessBuilder processBuilder = new ProcessBuilder("java", "-cp", "D:/3курс/java/Java_lab1/laba1/target/classes", "com.mycompany.laba1.Client");
+        processBuilder.inheritIO(); 
+        Process process = processBuilder.start(); 
+        process.waitFor(); 
+    } catch (IOException | InterruptedException e) {
+        e.printStackTrace(); 
+    }
+}
 
+
+    
+    private void receiveClientRegistrations() {
+    try (DatagramSocket serverSocket = new DatagramSocket(SERVER_PORT)) {
+        byte[] receiveData = new byte[BUFFER_SIZE];
+
+        while (clientPorts.size() < 13) {
+            DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+            serverSocket.receive(receivePacket);
+
+            String message = new String(receivePacket.getData(), 0, receivePacket.getLength(), "UTF-8");
+
+            if (message.startsWith("REGISTER:")) {
+                int clientPort = Integer.parseInt(message.split(":")[1]);
+                clientPorts.put(clientPorts.size() + 1, clientPort);
+                System.out.println("Client " + clientPorts.size() + " registered on port: " + clientPort);
+            }
+        }
+    } catch (IOException e) {
+        e.printStackTrace();
+    }
+}
+    private void sendTask(int clientId, double a, double b, double h) {
+        try {
+        DatagramSocket socket = new DatagramSocket();
+        InetAddress clientAddress = InetAddress.getByName("localhost");
+
+        int clientPort = clientPorts.get(clientId);
+        String task = "TASK:" + clientId + ":" + a + ":" + b + ":" + h;
+        byte[] sendData = task.getBytes("UTF-8");
+
+        DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, clientAddress, clientPort);
+        socket.send(sendPacket);
+        socket.close();
+
+        System.out.println("Task sent to client " + clientId + " on port " + clientPort);
+    } catch (IOException e) {
+        e.printStackTrace();
+    }
+    }
+    private double receiveResults() {
+        double totalResult = 0.0;
+        Map<Integer, Double> results = new HashMap<>();
+        
+        results.clear();
+        try (DatagramSocket serverSocket = new DatagramSocket(SERVER_PORT)) {
+            byte[] receiveData = new byte[BUFFER_SIZE];
+
+            while (results.size() < clientPorts.size()) {
+                DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+                serverSocket.receive(receivePacket);
+
+                String message = new String(receivePacket.getData(), 0, receivePacket.getLength());
+                System.out.println(message);
+
+                if (message.startsWith("RESULT:")) {
+                    String[] parts = message.split(":");
+                    int clientId = Integer.parseInt(parts[1]);
+                    double partialResult = Double.parseDouble(parts[2]);
+
+                    results.put(clientId, partialResult);
+                    
+                }
+            }
+
+            totalResult = results.values().stream().mapToDouble(Double::doubleValue).sum();
+            
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return totalResult;
+    }
+    
+   
     private static LinkedList<RecIntegral> readRecIntegralsFromTextFile() {
         LinkedList<RecIntegral> recIntegrals = new LinkedList<>();
         JFileChooser fileChooser = new JFileChooser();
@@ -437,54 +539,76 @@ public class laba1 extends javax.swing.JFrame {
     }//GEN-LAST:event_jButton3ActionPerformed
 
     private void jButton1ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton1ActionPerformed
-    javax.swing.table.DefaultTableModel model = (javax.swing.table.DefaultTableModel) jTable1.getModel();
     selectedRow = jTable1.getSelectedRow();
+if (selectedRow != -1) {
+    try {
+        RecIntegral record = linkedList.get(selectedRow);
+        double a = record.getLowborder();
+        double b = record.getHighborder();
+        double h = record.getStep();
 
-    if (selectedRow != -1) { // Проверка, выбрана ли строка
-        Object lowBorderObj = model.getValueAt(selectedRow, 0);
-        Object highBorderObj = model.getValueAt(selectedRow, 1);
-        Object stepObj = model.getValueAt(selectedRow, 2);
+
+        double interval = (b - a) / 13;
+
+        for (int i = 0; i < 13; i++) {
+            double start = a + i * interval;
+            double end = a + (i + 1) * interval;
+            sendTask(i + 1, start, end, h); 
+        }
+
+        // Ждем результатов
+        double totalResult = receiveResults();
         
-        double lowBorder = Double.parseDouble(lowBorderObj.toString());
-        double highBorder = Double.parseDouble(highBorderObj.toString());
-        double step = Double.parseDouble(stepObj.toString());
-
-        double answer = CalculationOfValue(lowBorder, highBorder, step);
-        ShowTheAnswer(answer);
-    } else {
-        JOptionPane.showMessageDialog(this, "Пожалуйста, выберите строку для вычисления.", "Ошибка", JOptionPane.ERROR_MESSAGE);
+        DefaultTableModel model = (DefaultTableModel) jTable1.getModel();
+        model.setValueAt(totalResult, selectedRow, 3);
+        linkedList.get(selectedRow).setAnswer(totalResult);
+    } catch (Exception e) {
+        JOptionPane.showMessageDialog(this, "Ошибка при отправке задач клиентам", "Ошибка", JOptionPane.ERROR_MESSAGE);
     }
+} else {
+    JOptionPane.showMessageDialog(this, "Выберите строку для вычисления", "Ошибка", JOptionPane.WARNING_MESSAGE);
+}
 
     }//GEN-LAST:event_jButton1ActionPerformed
     
-   private double CalculationOfValue(double lowBorder, double highBorder, double step) {
-    int totalThreads = 12; 
-    double[] results = new double[totalThreads];
-
-    Thread[] threads = new Thread[totalThreads];
-    for (int i = 0; i < totalThreads; i++) {
-        threads[i] = new Thread(new IntegralTask(lowBorder, highBorder, step, i, totalThreads, results));
-        threads[i].start();
-    }
-
-    try {
-        for (Thread thread : threads) {
-            thread.join();
+   private double CalculationOfValue(Object low,Object high, Object step){
+        double dbllow = (Double) low;
+        double dblhigh = (Double) high;
+        double dblstep = (Double) step;
+        double answer = 0;
+        
+        ArrayList<Double> numbers = new ArrayList<>();
+        
+        //если шаг равен 0
+        if (dblstep == 0){
+            return answer;
         }
-    } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        System.err.println("Поток был прерван: " + e.getMessage());
+        
+        //подсчет шагов
+        for (double currentNumber = dbllow; currentNumber <= dblhigh; currentNumber += dblstep) {
+            numbers.add(currentNumber); 
+        }
+        
+        //если шаг равен 1
+        if (numbers.isEmpty()){
+            answer = (Math.sin(dbllow) + Math.sin(dblhigh)) * (dblstep / 2);
+            return answer;
+        }
+        
+        for (int counter = 0; counter < numbers.size() - 1; counter++) {
+            double currentElement = numbers.get(counter);
+            double nextElement = numbers.get(counter + 1);
+            double stepAnswer = (dblstep / 2) * (Math.sin(currentElement) + Math.sin(nextElement));
+            answer += stepAnswer;
+        }
+        
+        //если есть промежуток меньше шага между последним элементом и верхней границей       
+        if (dblhigh != numbers.get(numbers.size()-1)){
+            answer += (dblstep / 2) * (Math.sin(numbers.get(numbers.size()-1)) + Math.sin(dblhigh));
+        }
+
+        return answer;
     }
-
-    // Суммируем результаты всех потоков
-    double totalResult = 0;
-    for (double result : results) {
-        totalResult += result;
-    }
-
-    return totalResult;
-}
-
    private void ShowTheAnswer(double answer) {
     SwingUtilities.invokeLater(() -> {
         javax.swing.table.DefaultTableModel model = (javax.swing.table.DefaultTableModel) jTable1.getModel();
